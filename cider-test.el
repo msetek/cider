@@ -598,7 +598,7 @@ This uses the Leiningen convention of appending '-test' to the namespace name."
 (declare-function cider-emit-interactive-eval-output "cider-interaction")
 (declare-function cider-emit-interactive-eval-err-output "cider-interaction")
 
-(defun cider-test-execute (ns &optional tests silent)
+(defun cider-test-execute (ns &optional tests silent test-selector)
   "Run tests for NS, which may be a keyword, optionally specifying TESTS.
 
 This tests a single NS, or multiple namespaces when using keywords `:project',
@@ -608,51 +608,53 @@ report is optionally displayed.  When test failures/errors occur, their sources
 are highlighted.
 If SILENT is non-nil, suppress all messages other then test results."
   (cider-test-clear-highlights)
-  (cider-map-connections
-   (lambda (conn)
-     (unless silent
-       (if (and tests (= (length tests) 1))
-           ;; we generate a different message when running individual tests
-           (cider-test-echo-running ns (car tests))
-         (cider-test-echo-running ns)))
-     (cider-nrepl-send-request
-      `("op"     ,(cond ((stringp ns)         "test")
-                        ((eq :project ns)     "test-all")
-                        ((eq :loaded ns)      "test-all")
-                        ((eq :non-passing ns) "retest"))
-        "ns"     ,(when (stringp ns) ns)
-        "tests"  ,(when (stringp ns) tests)
-        "load?"  ,(when (or (stringp ns)
-                            (eq :project ns))
-                    "true"))
-      (lambda (response)
-        (nrepl-dbind-response response (summary results status out err)
-          (cond ((member "namespace-not-found" status)
-                 (unless silent
-                   (message "No test namespace: %s" (cider-propertize ns 'ns))))
-                (out (cider-emit-interactive-eval-output out))
-                (err (cider-emit-interactive-eval-err-output err))
-                (results
-                 (nrepl-dbind-response summary (error fail)
-                   (setq cider-test-last-summary summary)
-                   (setq cider-test-last-results results)
-                   (cider-test-highlight-problems results)
-                   (cider-test-echo-summary summary results)
-                   (if (or (not (zerop (+ error fail)))
-                           cider-test-show-report-on-success)
-                       (cider-test-render-report
-                        (cider-popup-buffer cider-test-report-buffer
-                                            cider-auto-select-test-report-buffer)
-                        summary results)
-                     (when (get-buffer cider-test-report-buffer)
-                       (with-current-buffer cider-test-report-buffer
-                         (let ((inhibit-read-only t))
-                           (erase-buffer)))
-                       (cider-test-render-report
-                        cider-test-report-buffer
-                        summary results))))))))
-      conn))
-   :clj))
+  (let ((selector (when test-selector (cider-read-from-minibuffer "Test selector (not as keyword): "))))
+    (cider-map-connections
+     (lambda (conn)
+       (unless silent
+         (if (and tests (= (length tests) 1))
+             ;; we generate a different message when running individual tests
+             (cider-test-echo-running ns (car tests))
+           (cider-test-echo-running ns)))
+       (cider-nrepl-send-request
+        `("op"     ,(cond ((stringp ns)         "test")
+                          ((eq :project ns)     "test-all")
+                          ((eq :loaded ns)      "test-all")
+                          ((eq :non-passing ns) "retest"))
+          "test-selector" ,(when (stringp selector) selector)
+          "ns"     ,(when (stringp ns) ns)
+          "tests"  ,(when (stringp ns) tests)
+          "load?"  ,(when (or (stringp ns)
+                              (eq :project ns))
+                      "true"))
+        (lambda (response)
+          (nrepl-dbind-response response (summary results status out err)
+            (cond ((member "namespace-not-found" status)
+                   (unless silent
+                     (message "No test namespace: %s" (cider-propertize ns 'ns))))
+                  (out (cider-emit-interactive-eval-output out))
+                  (err (cider-emit-interactive-eval-err-output err))
+                  (results
+                   (nrepl-dbind-response summary (error fail)
+                     (setq cider-test-last-summary summary)
+                     (setq cider-test-last-results results)
+                     (cider-test-highlight-problems results)
+                     (cider-test-echo-summary summary results)
+                     (if (or (not (zerop (+ error fail)))
+                             cider-test-show-report-on-success)
+                         (cider-test-render-report
+                          (cider-popup-buffer cider-test-report-buffer
+                                          cider-auto-select-test-report-buffer)
+                          summary results)
+                       (when (get-buffer cider-test-report-buffer)
+                         (with-current-buffer cider-test-report-buffer
+                           (let ((inhibit-read-only t))
+                             (erase-buffer)))
+                         (cider-test-render-report
+                          cider-test-report-buffer
+                          summary results))))))))
+        conn))
+     :clj)))
 
 (defun cider-test-rerun-failed-tests ()
   "Rerun failed and erring tests from the last test run."
@@ -664,15 +666,15 @@ If SILENT is non-nil, suppress all messages other then test results."
           (message "No prior failures to retest")))
     (message "No prior results to retest")))
 
-(defun cider-test-run-loaded-tests ()
+(defun cider-test-run-loaded-tests (test-selector)
   "Run all tests defined in currently loaded namespaces."
-  (interactive)
-  (cider-test-execute :loaded))
+  (interactive "P")
+  (cider-test-execute :loaded nil nil test-selector))
 
-(defun cider-test-run-project-tests ()
+(defun cider-test-run-project-tests (test-selector)
   "Run all tests defined in all project namespaces, loading these as needed."
-  (interactive)
-  (cider-test-execute :project))
+  (interactive "P")
+  (cider-test-execute :project nil nil test-selector))
 
 (defun cider-test-run-ns-tests (suppress-inference &optional silent)
   "Run all tests for the current Clojure namespace context.
